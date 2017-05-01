@@ -27,12 +27,21 @@ var tg threadgroup.ThreadGroup
 
 // Create the logger and set it to shutdown upon closing.
 log := NewLogger()
-tg.AfterStop(func() {
-	log.Close()
-}
+tg.AfterStop(func() error {
+	return log.Close()
+})
 
 // Create a thread to repeatedly dial a remote address with quick shutdown.
 go func() {
+	// Block shutdown until this thread has completed.
+	err := tg.Add()
+	if err != nil {
+		return
+	}
+	defer tg.Done()
+
+	// Repeatedly perform a dial. Latency means the dial could take up to a
+	// minute, which would delay shutdown without a cancel chan.
 	for {
 		// Perform the dial, but abort quickly if 'Stop' is called.
 		dialer := &net.Dialer{
@@ -52,8 +61,48 @@ go func() {
 			return
 		}
 	}
+
+	// Close will not be called on the logger until after this Println has been
+	// called, because AfterStop functions do not run until after all threads
+	// have called tg.Done().
+	log.Println("closed cleanly")
+}()
+
+// Create a long running thread to listen on the network.
+go func() {
+	// Block shutdown until this thread has completed.
+	err := tg.Add()
+	if err != nil {
+		return
+	}
+	defer tg.Done()
+
+	// Create the listener.
+	listener, err := net.Listen("tcp", ":12345")
+	if err != nil {
+		return
+	}
+	// Close the listener as soon as 'Stop' is called, no need to wait for the
+	// other resources to shut down.
+	tg.OnStop(func() error {
+		return listener.Close()
+	})
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			// Accept will return an error as soon as the listener is closed.
+			return
+		}
+		conn.Close()
+	}
+
 }()
 
 // Calling Stop will result in a quick, organized shutdown that closes all
 // long-running resources.
+err := tg.Stop()
+if err != nil {
+	fmt.Println(err)
+}
 ```

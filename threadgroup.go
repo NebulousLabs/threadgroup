@@ -9,8 +9,9 @@
 package threadgroup
 
 import (
-	"errors"
 	"sync"
+
+	"github.com/NebulousLabs/errors"
 )
 
 // ErrStopped is returned by ThreadGroup methods if Stop has already been
@@ -24,8 +25,8 @@ var ErrStopped = errors.New("ThreadGroup already stopped")
 //
 // It is safe to call Add(), Done(), and Stop() concurrently.
 type ThreadGroup struct {
-	onStopFns    []func()
-	afterStopFns []func()
+	onStopFns    []func() error
+	afterStopFns []func() error
 
 	once     sync.Once
 	stopChan chan struct{}
@@ -71,7 +72,7 @@ func (tg *ThreadGroup) Add() error {
 // The primary use of AfterStop is to allow code that opens and closes
 // resources to be positioned next to each other. The purpose is similar to
 // `defer`, except for resources that outlive the function which creates them.
-func (tg *ThreadGroup) AfterStop(fn func()) {
+func (tg *ThreadGroup) AfterStop(fn func() error) {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
 
@@ -88,7 +89,7 @@ func (tg *ThreadGroup) AfterStop(fn func()) {
 // OnStop functions will be called in the reverse order in which they were
 // added, similar to defer. If Stop() has already been called, the input
 // function will be called immediately.
-func (tg *ThreadGroup) OnStop(fn func()) {
+func (tg *ThreadGroup) OnStop(fn func() error) {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
 
@@ -107,7 +108,10 @@ func (tg *ThreadGroup) Done() {
 // Stop will close the stop channel of the thread group, then call all 'OnStop'
 // functions in reverse order, then will wait until the thread group counter
 // reaches zero, then will call all of the 'AfterStop' functions in reverse
-// order. After Stop is called, most actions will return ErrStopped.
+// order.
+//
+// The errors returned by the OnStop and AfterStop functions will be composed
+// into a single error.
 func (tg *ThreadGroup) Stop() error {
 	// Signal that the threadgroup is shutting down.
 	if tg.isStopped() {
@@ -118,9 +122,10 @@ func (tg *ThreadGroup) Stop() error {
 	tg.bmu.Unlock()
 
 	// Run all of the OnStop functions, in reverse order of how they were added.
+	var err error
 	tg.mu.Lock()
 	for i := len(tg.onStopFns) - 1; i >= 0; i-- {
-		tg.onStopFns[i]()
+		err = errors.Extend(err, tg.onStopFns[i]())
 	}
 	tg.onStopFns = nil
 	tg.mu.Unlock()
@@ -132,11 +137,11 @@ func (tg *ThreadGroup) Stop() error {
 	// added.
 	tg.mu.Lock()
 	for i := len(tg.afterStopFns) - 1; i >= 0; i-- {
-		tg.afterStopFns[i]()
+		err = errors.Extend(err, tg.afterStopFns[i]())
 	}
 	tg.afterStopFns = nil
 	tg.mu.Unlock()
-	return nil
+	return err
 }
 
 // StopChan provides read-only access to the ThreadGroup's stopChan. Callers

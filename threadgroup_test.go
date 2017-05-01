@@ -105,19 +105,23 @@ func TestThreadGroupStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tg.OnStop(func() {
+	tg.OnStop(func() error {
 		tg.Done()
 		stopCalls = append(stopCalls, 1)
+		return nil
 	})
-	tg.OnStop(func() {
+	tg.OnStop(func() error {
 		tg.Done()
 		stopCalls = append(stopCalls, 2)
+		return nil
 	})
-	tg.AfterStop(func() {
+	tg.AfterStop(func() error {
 		stopCalls = append(stopCalls, 10)
+		return nil
 	})
-	tg.AfterStop(func() {
+	tg.AfterStop(func() error {
 		stopCalls = append(stopCalls, 20)
+		return nil
 	})
 	// None of the stop calls should have been called yet.
 	if len(stopCalls) != 0 {
@@ -170,15 +174,17 @@ func TestThreadGroupStop(t *testing.T) {
 	// OnStop and AfterStop should call their functions immediately now that
 	// the thread group has stopped.
 	onStopCalled := false
-	tg.OnStop(func() {
+	tg.OnStop(func() error {
 		onStopCalled = true
+		return nil
 	})
 	if !onStopCalled {
 		t.Error("OnStop function not called immediately despite the thread group being closed already.")
 	}
 	afterStopCalled := false
-	tg.AfterStop(func() {
+	tg.AfterStop(func() error {
 		afterStopCalled = true
+		return nil
 	})
 	if !afterStopCalled {
 		t.Error("AfterStop function not called immediately despite the thread group being closed already.")
@@ -258,7 +264,7 @@ func TestThreadGroupOnStop(t *testing.T) {
 
 	// create ThreadGroup and register the closer
 	var tg ThreadGroup
-	tg.OnStop(func() { l.Close() })
+	tg.OnStop(func() error { return l.Close() })
 
 	// send on channel when listener is closed
 	var closed bool
@@ -296,7 +302,7 @@ func TestThreadGroupRace(t *testing.T) {
 func TestThreadGroupClosedAfterStop(t *testing.T) {
 	var tg ThreadGroup
 	var closed bool
-	tg.AfterStop(func() { closed = true })
+	tg.AfterStop(func() error { closed = true; return nil })
 	if closed {
 		t.Fatal("close function should not have been called yet")
 	}
@@ -310,7 +316,7 @@ func TestThreadGroupClosedAfterStop(t *testing.T) {
 	// Stop has already been called, so the close function should be called
 	// immediately
 	closed = false
-	tg.AfterStop(func() { closed = true })
+	tg.AfterStop(func() error { closed = true; return nil })
 	if !closed {
 		t.Fatal("close function should have been called immediately")
 	}
@@ -351,14 +357,15 @@ func TestThreadGroupNetworkExample(t *testing.T) {
 		}
 		close(handlerFinishedChan)
 	}()
-	tg.OnStop(func() {
+	tg.OnStop(func() error {
 		err := listener.Close()
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 		<-handlerFinishedChan
 
 		listenerCleanedUp = true
+		return nil
 	})
 
 	// Create a thread that does some stuff which takes time, and then closes.
@@ -367,10 +374,11 @@ func TestThreadGroupNetworkExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
+	go func() error {
 		time.Sleep(time.Second)
 		threadFinished = true
 		tg.Done()
+		return nil
 	}()
 
 	// Create a thread that does some stuff which takes time, and then closes.
@@ -381,15 +389,19 @@ func TestThreadGroupNetworkExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
+	go func() error {
 		time.Sleep(time.Second)
 		threadFinished2 = true
 		tg.Done()
+		return nil
 	}()
 
 	// Let the listener run for a bit.
 	time.Sleep(100 * time.Millisecond)
-	tg.Stop()
+	err = tg.Stop()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !threadFinished2 || !listenerCleanedUp {
 		t.Error("stop did not block until all running resources had closed")
 	}
@@ -423,8 +435,9 @@ func TestAddOnStop(t *testing.T) {
 	var data int
 	addChan := make(chan struct{})
 	stopChan := make(chan struct{})
-	tg.OnStop(func() {
+	tg.OnStop(func() error {
 		close(stopChan)
+		return nil
 	})
 	go func() {
 		err := tg.Add()
@@ -438,11 +451,13 @@ func TestAddOnStop(t *testing.T) {
 		// calling 'Done'.
 		<-stopChan
 		for i := 0; i < 10; i++ {
-			tg.OnStop(func() {
+			tg.OnStop(func() error {
 				data++
+				return nil
 			})
-			tg.AfterStop(func() {
+			tg.AfterStop(func() error {
 				data++
+				return nil
 			})
 		}
 		tg.Done()
