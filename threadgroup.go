@@ -63,41 +63,42 @@ func (tg *ThreadGroup) Add() error {
 	return nil
 }
 
-// AfterStop ensures that a function will be called after Stop() has been
-// called and after all running routines have called Done(). The functions will
-// be called in reverse order to how they were added, similar to defer. If
-// Stop() has already been called, the input function will be called
-// immediately.
+// AfterStop ensures that a function will be called after Stop() has been called
+// and after all running routines have called Done(). The functions will be
+// called in reverse order to how they were added, similar to defer. If Stop()
+// has already been called, the input function will be called immediately, and a
+// composition of ErrStopped and the error from calling fn will be returned.
 //
 // The primary use of AfterStop is to allow code that opens and closes
 // resources to be positioned next to each other. The purpose is similar to
 // `defer`, except for resources that outlive the function which creates them.
-func (tg *ThreadGroup) AfterStop(fn func() error) {
+func (tg *ThreadGroup) AfterStop(fn func() error) error {
 	tg.mu.Lock()
-	defer tg.mu.Unlock()
-
 	if tg.isStopped() {
-		fn()
-		return
+		tg.mu.Unlock()
+		return errors.Compose(ErrStopped, fn())
 	}
 	tg.afterStopFns = append(tg.afterStopFns, fn)
+	tg.mu.Unlock()
+	return nil
 }
 
 // OnStop ensures that a function will be called after Stop() has been called,
-// and before blocking until all running routines have called Done(). It is
-// safe to use OnStop to coordinate the closing of long-running threads. The
-// OnStop functions will be called in the reverse order in which they were
-// added, similar to defer. If Stop() has already been called, the input
-// function will be called immediately.
-func (tg *ThreadGroup) OnStop(fn func() error) {
+// and before blocking until all running routines have called Done(). It is safe
+// to use OnStop to coordinate the closing of long-running threads. The OnStop
+// functions will be called in the reverse order in which they were added,
+// similar to defer. If Stop() has already been called, the input function will
+// be called immediately, and a composition of ErrStopped and the error from
+// calling fn will be returned.
+func (tg *ThreadGroup) OnStop(fn func() error) error {
 	tg.mu.Lock()
-	defer tg.mu.Unlock()
-
 	if tg.isStopped() {
-		fn()
-		return
+		tg.mu.Unlock()
+		return errors.Compose(ErrStopped, fn())
 	}
 	tg.onStopFns = append(tg.onStopFns, fn)
+	tg.mu.Unlock()
+	return nil
 }
 
 // Done decrements the thread group counter.
@@ -121,26 +122,26 @@ func (tg *ThreadGroup) Stop() error {
 	close(tg.stopChan)
 	tg.bmu.Unlock()
 
+	// Flush any function that made it past isStopped and might be trying to do
+	// something under the mu lock. Any calls to OnStop or AfterStop after this
+	// will fail, because isStopped will cut them short.
+	tg.mu.Lock()
+	tg.mu.Unlock()
+
 	// Run all of the OnStop functions, in reverse order of how they were added.
 	var err error
-	tg.mu.Lock()
 	for i := len(tg.onStopFns) - 1; i >= 0; i-- {
 		err = errors.Extend(err, tg.onStopFns[i]())
 	}
-	tg.onStopFns = nil
-	tg.mu.Unlock()
 
 	// Wait for all running processes to signal completion.
 	tg.wg.Wait()
 
 	// Run all of the AfterStop functions, in reverse order of how they were
 	// added.
-	tg.mu.Lock()
 	for i := len(tg.afterStopFns) - 1; i >= 0; i-- {
 		err = errors.Extend(err, tg.afterStopFns[i]())
 	}
-	tg.afterStopFns = nil
-	tg.mu.Unlock()
 	return err
 }
 

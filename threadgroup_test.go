@@ -105,24 +105,36 @@ func TestThreadGroupStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tg.OnStop(func() error {
+	err = tg.OnStop(func() error {
 		tg.Done()
 		stopCalls = append(stopCalls, 1)
 		return nil
 	})
-	tg.OnStop(func() error {
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tg.OnStop(func() error {
 		tg.Done()
 		stopCalls = append(stopCalls, 2)
 		return nil
 	})
-	tg.AfterStop(func() error {
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tg.AfterStop(func() error {
 		stopCalls = append(stopCalls, 10)
 		return nil
 	})
-	tg.AfterStop(func() error {
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tg.AfterStop(func() error {
 		stopCalls = append(stopCalls, 20)
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// None of the stop calls should have been called yet.
 	if len(stopCalls) != 0 {
 		t.Fatal("Stop calls were called too early")
@@ -174,18 +186,25 @@ func TestThreadGroupStop(t *testing.T) {
 	// OnStop and AfterStop should call their functions immediately now that
 	// the thread group has stopped.
 	onStopCalled := false
-	tg.OnStop(func() error {
+	err = tg.OnStop(func() error {
 		onStopCalled = true
 		return nil
 	})
+	if err == nil {
+		t.Fatal("OnStop should return an error after being called after stop")
+	}
+
 	if !onStopCalled {
 		t.Error("OnStop function not called immediately despite the thread group being closed already.")
 	}
 	afterStopCalled := false
-	tg.AfterStop(func() error {
+	err = tg.AfterStop(func() error {
 		afterStopCalled = true
 		return nil
 	})
+	if err == nil {
+		t.Fatal("AfterStop should return an error after being called after stop")
+	}
 	if !afterStopCalled {
 		t.Error("AfterStop function not called immediately despite the thread group being closed already.")
 	}
@@ -264,7 +283,10 @@ func TestThreadGroupOnStop(t *testing.T) {
 
 	// create ThreadGroup and register the closer
 	var tg ThreadGroup
-	tg.OnStop(func() error { return l.Close() })
+	err = tg.OnStop(func() error { return l.Close() })
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// send on channel when listener is closed
 	var closed bool
@@ -302,7 +324,10 @@ func TestThreadGroupRace(t *testing.T) {
 func TestThreadGroupClosedAfterStop(t *testing.T) {
 	var tg ThreadGroup
 	var closed bool
-	tg.AfterStop(func() error { closed = true; return nil })
+	err := tg.AfterStop(func() error { closed = true; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	if closed {
 		t.Fatal("close function should not have been called yet")
 	}
@@ -316,7 +341,10 @@ func TestThreadGroupClosedAfterStop(t *testing.T) {
 	// Stop has already been called, so the close function should be called
 	// immediately
 	closed = false
-	tg.AfterStop(func() error { closed = true; return nil })
+	err = tg.AfterStop(func() error { closed = true; return nil })
+	if err == nil {
+		t.Fatal("AfterStop should return an error after stop")
+	}
 	if !closed {
 		t.Fatal("close function should have been called immediately")
 	}
@@ -357,7 +385,7 @@ func TestThreadGroupNetworkExample(t *testing.T) {
 		}
 		close(handlerFinishedChan)
 	}()
-	tg.OnStop(func() error {
+	err = tg.OnStop(func() error {
 		err := listener.Close()
 		if err != nil {
 			return err
@@ -367,6 +395,9 @@ func TestThreadGroupNetworkExample(t *testing.T) {
 		listenerCleanedUp = true
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a thread that does some stuff which takes time, and then closes.
 	threadFinished := false
@@ -435,10 +466,13 @@ func TestAddOnStop(t *testing.T) {
 	var data int
 	addChan := make(chan struct{})
 	stopChan := make(chan struct{})
-	tg.OnStop(func() error {
+	err := tg.OnStop(func() error {
 		close(stopChan)
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		err := tg.Add()
 		if err != nil {
@@ -451,14 +485,20 @@ func TestAddOnStop(t *testing.T) {
 		// calling 'Done'.
 		<-stopChan
 		for i := 0; i < 10; i++ {
-			tg.OnStop(func() error {
+			err = tg.OnStop(func() error {
 				data++
 				return nil
 			})
-			tg.AfterStop(func() error {
+			if err == nil {
+				t.Fatal("OnStop should return an error when being called after stop")
+			}
+			err = tg.AfterStop(func() error {
 				data++
 				return nil
 			})
+			if err == nil {
+				t.Fatal("AfterStop should return an error when being called after stop")
+			}
 		}
 		tg.Done()
 	}()
@@ -467,7 +507,7 @@ func TestAddOnStop(t *testing.T) {
 	// OnStop and AfterStop will be called after 'Add' and 'Stop' have been
 	// called together.
 	<-addChan
-	err := tg.Stop()
+	err = tg.Stop()
 	if err != nil {
 		t.Fatal(err)
 	}
